@@ -51,8 +51,15 @@
     return (window.JOBS || []).concat(custom.map(function (c) { c.custom = true; return c; }));
   }
   function toast(msg) {
-    var t = $('#toast'); t.textContent = msg; t.classList.add('show');
-    clearTimeout(toast.t); toast.t = setTimeout(function () { t.classList.remove('show'); }, 2600);
+    var t = $('#toast'); t.textContent = msg;
+    // 팝오버로 띄워서 열린 대화상자 위에도 보이게 합니다.
+    try { if (t.showPopover && !t.matches(':popover-open')) t.showPopover(); } catch (e) { /* ignore */ }
+    t.classList.add('show');
+    clearTimeout(toast.t);
+    toast.t = setTimeout(function () {
+      t.classList.remove('show');
+      try { if (t.hidePopover && t.matches(':popover-open')) t.hidePopover(); } catch (e) { /* ignore */ }
+    }, 2600);
   }
   function copyText(text) {
     if (navigator.clipboard && window.isSecureContext) {
@@ -63,10 +70,12 @@
   function legacyCopy(text) {
     var ta = document.createElement('textarea');
     ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
+    // 모달 대화상자가 열려 있으면 그 안에 만들어야 복사가 됩니다.
+    var host = document.querySelector('dialog[open]') || document.body;
+    host.appendChild(ta); ta.focus(); ta.select();
     var ok = false;
     try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-    document.body.removeChild(ta);
+    host.removeChild(ta);
     if (!ok) throw new Error('copy failed');
   }
 
