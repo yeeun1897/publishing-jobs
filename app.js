@@ -305,7 +305,7 @@
       role: f.get('role'), career: f.get('career'), region: f.get('region').trim() || null,
       employment: f.get('employment').trim() || null,
       deadline: always ? null : (f.get('deadline') || null),
-      source: f.get('source').trim() || '출처', sourceUrl: url, homepage: null,
+      source: f.get('source').trim() || '출처', sourceUrl: url, homepage: null, portfolio: !!f.get('portfolio'),
       checkedAt: new Date().toISOString().slice(0, 10), note: '직접 추가한 공고입니다. 마감일은 원문에서 확인하세요.',
       jd: { duties: [], requirements: [], preferred: [] }, company3y: []
     });
@@ -318,7 +318,11 @@
   function findJob(id) { return allJobs().filter(function (j) { return j.id === id; })[0]; }
   function noteOf(id) {
     if (!notes[id]) notes[id] = { jd: '', kpiRaw: '', fills: {} };
+    if (!notes[id].pf) notes[id].pf = { on: false, req: '', chosen: '', ask: false };
     return notes[id];
+  }
+  function pfOn(job) {
+    return job.portfolio === true || !!(notes[job.id] && notes[job.id].pf && notes[job.id].pf.on);
   }
   function openDetail(id) {
     cur = findJob(id); if (!cur) return;
@@ -333,6 +337,7 @@
     if (safeUrl(cur.homepage)) links += '<a class="btn" href="' + esc(cur.homepage) + '" target="_blank" rel="noopener noreferrer">회사 홈페이지 ↗</a>';
     links += '<button class="btn" id="dStar">' + (favs[cur.id] ? '★ 보관함에서 빼기' : '☆ 보관함에 담기') + '</button>';
     $('#dLinks').innerHTML = links;
+    $('#dTabs [data-d="pf"]').hidden = !pfOn(cur);
     curTab = 'jd'; setDTab('jd');
     if (!$('#detail').open) $('#detail').showModal();
   }
@@ -351,7 +356,7 @@
   function setDTab(t) {
     curTab = t;
     $$('#dTabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.d === t); });
-    if (t === 'jd') renderJD(); else if (t === 'co') renderCompany(); else renderKpi();
+    if (t === 'jd') renderJD(); else if (t === 'co') renderCompany(); else if (t === 'pf') renderPortfolio(); else renderKpi();
   }
 
   function listHtml(arr) {
@@ -373,8 +378,14 @@
     }
     html += '<div class="sec"><h3>내가 붙여 넣은 JD</h3>' +
       '<textarea id="jdText" placeholder="원본 공고의 담당업무·자격요건·우대사항을 붙여 넣으세요 (한 줄에 한 항목)">' + esc(n.jd || '') + '</textarea>' +
-      '<div id="jdOut">' + listHtml(userLines) + '</div></div>';
+      '<div id="jdOut">' + listHtml(userLines) + '</div></div>' +
+      '<label class="chk"><input type="checkbox" id="pfToggle"' + (pfOn(cur) ? ' checked' : '') + (cur.portfolio === true ? ' disabled' : '') + '> 이 공고는 포트폴리오·첨부 파일 제출이 있어요 (체크하면 “포트폴리오” 탭이 열립니다)</label>';
     $('#dBody').innerHTML = html;
+    $('#pfToggle').addEventListener('change', function (e) {
+      n.pf.on = e.target.checked; store.set('notes', notes);
+      $('#dTabs [data-d="pf"]').hidden = !pfOn(cur);
+      toast(e.target.checked ? '포트폴리오 탭이 열렸어요' : '포트폴리오 탭을 닫았어요');
+    });
     $('#jdText').addEventListener('input', function (e) {
       n.jd = e.target.value; store.set('notes', notes);
       $('#jdOut').innerHTML = listHtml(e.target.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean));
@@ -548,6 +559,177 @@
       store.set('exps', exps); drawKpis(); toast('내 경험으로 저장했어요');
     }
   });
+
+  /* ---------- 포트폴리오 양식 제안과 파일 만들기 ---------- */
+  function tplsFor(job) {
+    var T = window.PF_TEMPLATES || {};
+    var base = T[job.role] || [];
+    return base.concat(T['공통'] || []).map(function (t) {
+      return { id: t.id, name: t.name, pages: t.pages, fit: t.fit, sections: t.sections };
+    });
+  }
+  function findTpl(job, id) { return tplsFor(job).filter(function (t) { return t.id === id; })[0]; }
+
+  function renderPortfolio() {
+    var n = noteOf(cur.id), pf = n.pf, tpls = tplsFor(cur);
+    var reqLines = (pf.req || '').split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var html = '<p class="note">공고에 제출 양식이 적혀 있으면 <b>그 양식이 우선</b>입니다. 아래 추천은 일반적인 구성 제안이라 출판사별 실제 요구와 다를 수 있어요.</p>' +
+      '<div class="sec"><h3>공고에 명시된 제출 요건 (직접 입력)</h3>' +
+      '<textarea id="pfReq" placeholder="예: PDF 10쪽 이내, 파일 20MB 이하, 교정 샘플 포함 (원본 공고에서 확인한 내용을 적으세요)">' + esc(pf.req || '') + '</textarea>' +
+      '<div id="pfReqOut">' + listHtml(reqLines) + '</div>' +
+      (safeUrl(cur.sourceUrl) ? '<p class="muted" style="margin-top:8px">확인은 <a href="' + esc(cur.sourceUrl) + '" target="_blank" rel="noopener noreferrer">원본 공고 ↗</a>에서 하세요.</p>' : '') + '</div>' +
+      '<h3 style="font-family:var(--serif);margin:18px 0 10px">추천 포트폴리오 양식</h3>';
+    html += tpls.map(function (t) {
+      var sel = pf.chosen === t.id;
+      return '<div class="tpl' + (sel ? ' sel' : '') + '" data-tpl="' + esc(t.id) + '">' +
+        '<div class="th"><h3>' + esc(t.name) + '</h3><span class="muted">' + esc(t.pages) + '</span></div>' +
+        '<p class="meta">' + esc(t.fit) + '</p>' +
+        '<ol>' + t.sections.map(function (s) { return '<li>' + esc(s[0]) + '</li>'; }).join('') + '</ol>' +
+        '<button class="btn small' + (sel ? ' primary' : '') + '" data-pfpick="' + esc(t.id) + '" aria-pressed="' + sel + '">' + (sel ? '✓ 선택됨' : '이 양식으로 선택') + '</button></div>';
+    }).join('');
+    html += '<div id="pfAsk">' + askHtml(pf, tpls) + '</div>';
+    $('#dBody').innerHTML = html;
+    $('#pfReq').addEventListener('input', function (e) {
+      pf.req = e.target.value; store.set('notes', notes);
+      $('#pfReqOut').innerHTML = listHtml(e.target.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean));
+    });
+  }
+  function askHtml(pf, tpls) {
+    var t = tpls.filter(function (x) { return x.id === pf.chosen; })[0];
+    if (!t) return '';
+    if (!pf.ask) {
+      return '<div class="ask"><p class="muted" style="font-family:var(--sans);font-weight:400">선택한 양식: <b>' + esc(t.name) + '</b></p>' +
+        '<button class="btn small" data-pfask="1">파일 만들기</button></div>';
+    }
+    return '<div class="ask"><p>“' + esc(t.name) + '” 양식을 파일로 만들어 드릴까요?</p>' +
+      '<div class="row"><button class="btn primary" data-pfmake="docx">Word(.docx)로 만들기</button>' +
+      '<button class="btn primary" data-pfmake="pptx">PowerPoint(.pptx)로 만들기</button>' +
+      '<button class="btn" data-pfno="1">아니요, 선택만 저장</button></div>' +
+      '<p class="muted" style="margin-top:10px">목차와 작성 안내 문구가 들어간 <b>빈 양식</b>입니다. 내용은 직접 채워 주세요.</p>' +
+      '<div class="row" style="margin-top:10px"><a class="btn small" href="https://www.canva.com/" target="_blank" rel="noopener noreferrer">Canva 열기 ↗</a>' +
+      '<span class="muted">Canva에서 새 디자인을 만들고 이 양식의 목차를 참고하세요. 내려받은 .pptx는 Canva로 불러와 편집할 수도 있어요.</span></div></div>';
+  }
+
+  $('#dBody').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-pfpick],[data-pfmake],[data-pfno],[data-pfask]');
+    if (!b || !cur) return;
+    var pf = noteOf(cur.id).pf, tpls = tplsFor(cur);
+    if (b.hasAttribute('data-pfpick')) {
+      pf.chosen = b.dataset.pfpick; pf.ask = true; store.set('notes', notes); renderPortfolio();
+      var a = $('#pfAsk'); if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else if (b.hasAttribute('data-pfno')) {
+      pf.ask = false; store.set('notes', notes); renderPortfolio(); toast('선택만 저장했어요');
+    } else if (b.hasAttribute('data-pfask')) {
+      pf.ask = true; store.set('notes', notes); renderPortfolio();
+    } else if (b.hasAttribute('data-pfmake')) {
+      var t = findTpl(cur, pf.chosen); if (!t) return;
+      var kind = b.dataset.pfmake;
+      b.disabled = true;
+      var job = cur, req = pf.req || '';
+      Promise.resolve().then(function () {
+        return kind === 'docx' ? makeDocx(job, t, req) : makePptx(job, t, req);
+      }).then(function (blob) {
+        download(blob, fileName(job, t, kind));
+        toast(kind === 'docx' ? 'Word 파일을 만들었어요' : 'PowerPoint 파일을 만들었어요');
+      }).catch(function (err) {
+        toast('파일을 만들지 못했어요');
+        if (window.console) console.error(err);
+      }).then(function () { b.disabled = false; });
+    }
+  });
+
+  function fileName(job, t, ext) {
+    var s = ('포트폴리오_' + job.company + '_' + t.name).replace(/[\\/:*?"<>|\s]+/g, '_');
+    return s + '.' + ext;
+  }
+  function download(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+    window.__lastDownload = { name: name, size: blob.size, blob: blob };
+  }
+  function todayText() {
+    var d = new Date();
+    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+  }
+  var FONT = 'Malgun Gothic';
+
+  function makeDocx(job, t, req) {
+    var D = window.docx;
+    if (!D) return Promise.reject(new Error('docx library missing'));
+    var P = function (text, o) {
+      o = o || {};
+      return new D.Paragraph({
+        heading: o.heading, spacing: { before: o.before || 0, after: o.after == null ? 120 : o.after },
+        children: [new D.TextRun({ text: text, font: FONT, size: o.size || 22, bold: !!o.bold, italics: !!o.italics, color: o.color })]
+      });
+    };
+    var kids = [];
+    kids.push(P(job.company + ' · ' + job.role, { size: 22, color: '746C62', before: 1800 }));
+    kids.push(P('포트폴리오', { size: 64, bold: true, after: 60 }));
+    kids.push(P(t.name, { size: 32, color: '8A2B17', after: 600 }));
+    kids.push(P('지원 공고: ' + job.title, { size: 22 }));
+    kids.push(P('이름: ', { size: 22, before: 300 }));
+    kids.push(P('연락처: ', { size: 22 }));
+    kids.push(P('작성일: ' + todayText(), { size: 22 }));
+    kids.push(P('권장 분량: ' + t.pages, { size: 20, color: '746C62', before: 300 }));
+    kids.push(new D.Paragraph({ children: [new D.PageBreak()] }));
+    if (req.trim()) {
+      kids.push(P('공고 제출 요건 메모', { heading: D.HeadingLevel.HEADING_1, size: 30, bold: true, after: 160 }));
+      req.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (l) { kids.push(P('· ' + l)); });
+      kids.push(P('※ 위 요건이 이 양식과 다르면 공고의 요건을 우선하세요.', { size: 20, italics: true, color: '746C62', before: 200 }));
+      kids.push(new D.Paragraph({ children: [new D.PageBreak()] }));
+    }
+    kids.push(P('목차', { heading: D.HeadingLevel.HEADING_1, size: 30, bold: true, after: 160 }));
+    t.sections.forEach(function (s, i) { kids.push(P((i + 1) + '. ' + s[0])); });
+    t.sections.forEach(function (s, i) {
+      kids.push(new D.Paragraph({ children: [new D.PageBreak()] }));
+      kids.push(P((i + 1) + '. ' + s[0], { heading: D.HeadingLevel.HEADING_1, size: 30, bold: true, after: 160 }));
+      kids.push(P('작성 안내: ' + s[1], { size: 20, italics: true, color: '746C62', after: 240 }));
+      kids.push(P('[여기에 내용을 작성하세요]', { color: 'B0A89C' }));
+      kids.push(P('', {}));
+      kids.push(P('', {}));
+    });
+    var doc = new D.Document({
+      creator: '출판 채용 노트', title: '포트폴리오 - ' + t.name,
+      sections: [{ children: kids }]
+    });
+    return D.Packer.toBlob(doc);
+  }
+
+  function makePptx(job, t, req) {
+    if (!window.PptxGenJS) return Promise.reject(new Error('pptx library missing'));
+    var pres = new window.PptxGenJS();
+    pres.layout = 'LAYOUT_16x9';
+    pres.title = '포트폴리오 - ' + t.name;
+    var INK = '141210', PAPER = 'F1EDE6', MUTED = '746C62', ACC = '8A2B17';
+    var s = pres.addSlide(); s.background = { color: INK };
+    s.addText(job.company + ' · ' + job.role, { x: 0.7, y: 1.2, w: 8.6, h: 0.4, fontFace: FONT, fontSize: 14, color: 'B0A89C' });
+    s.addText('포트폴리오', { x: 0.7, y: 1.8, w: 8.6, h: 1, fontFace: FONT, fontSize: 44, bold: true, color: PAPER });
+    s.addText(t.name, { x: 0.7, y: 2.8, w: 8.6, h: 0.6, fontFace: FONT, fontSize: 22, color: 'E0866D' });
+    s.addText('이름:                    연락처:                    ' + todayText(), { x: 0.7, y: 4.4, w: 8.6, h: 0.4, fontFace: FONT, fontSize: 12, color: 'B0A89C' });
+    if (req.trim()) {
+      var r = pres.addSlide(); r.background = { color: PAPER };
+      r.addText('공고 제출 요건 메모', { x: 0.7, y: 0.5, w: 8.6, h: 0.7, fontFace: FONT, fontSize: 26, bold: true, color: INK });
+      r.addText(req.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean).map(function (l) { return { text: l, options: { bullet: true, breakLine: true } }; }),
+        { x: 0.7, y: 1.4, w: 8.6, h: 3.4, fontFace: FONT, fontSize: 16, color: INK, valign: 'top' });
+      r.addText('※ 이 요건이 양식과 다르면 공고의 요건을 우선하세요.', { x: 0.7, y: 4.9, w: 8.6, h: 0.4, fontFace: FONT, fontSize: 11, italic: true, color: MUTED });
+    }
+    var toc = pres.addSlide(); toc.background = { color: PAPER };
+    toc.addText('목차', { x: 0.7, y: 0.5, w: 8.6, h: 0.7, fontFace: FONT, fontSize: 26, bold: true, color: INK });
+    toc.addText(t.sections.map(function (x, i) { return { text: (i + 1) + '. ' + x[0], options: { breakLine: true } }; }),
+      { x: 0.7, y: 1.4, w: 8.6, h: 3.8, fontFace: FONT, fontSize: 18, color: INK, valign: 'top', paraSpaceAfter: 6 });
+    t.sections.forEach(function (x, i) {
+      var sl = pres.addSlide(); sl.background = { color: PAPER };
+      sl.addText(String(i + 1).padStart(2, '0'), { x: 0.7, y: 0.35, w: 1, h: 0.4, fontFace: FONT, fontSize: 14, color: ACC, bold: true });
+      sl.addText(x[0], { x: 0.7, y: 0.75, w: 8.6, h: 0.7, fontFace: FONT, fontSize: 26, bold: true, color: INK });
+      sl.addText('작성 안내: ' + x[1], { x: 0.7, y: 1.5, w: 8.6, h: 0.7, fontFace: FONT, fontSize: 12, italic: true, color: MUTED, valign: 'top' });
+      sl.addShape(pres.ShapeType.rect, { x: 0.7, y: 2.4, w: 8.6, h: 2.7, fill: { color: 'FAF8F4' }, line: { color: 'B0A89C', width: 1, dashType: 'dash' } });
+      sl.addText('[여기에 내용·이미지를 넣으세요]', { x: 0.7, y: 2.4, w: 8.6, h: 2.7, align: 'center', valign: 'middle', fontFace: FONT, fontSize: 14, color: 'B0A89C' });
+    });
+    return pres.write({ outputType: 'blob' });
+  }
 
   /* ---------- 시작 ---------- */
   $('#updated').textContent = '공고 확인일 ' + (window.JOBS_UPDATED || '-');
